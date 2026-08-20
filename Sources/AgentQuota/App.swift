@@ -66,11 +66,21 @@ struct QuotaService: Identifiable, Codable, Equatable {
             ),
             QuotaService(
                 id: UUID(),
-                name: "Agy",
+                name: "Agy Claude",
                 plan: "Pro",
                 symbol: "A",
-                current: 8,
-                max: 20,
+                current: 0,
+                max: 100,
+                resetAt: Date().addingTimeInterval(53 * 60 * 60),
+                accentHex: "#D97757"
+            ),
+            QuotaService(
+                id: UUID(),
+                name: "Agy Gemini",
+                plan: "Pro",
+                symbol: "A",
+                current: 0,
+                max: 100,
                 resetAt: Date().addingTimeInterval(53 * 60 * 60),
                 accentHex: "#4285F4"
             ),
@@ -79,7 +89,7 @@ struct QuotaService: Identifiable, Codable, Equatable {
                 name: "Copilot",
                 plan: "Pro",
                 symbol: "C",
-                current: 1200,
+                current: 2000,
                 max: 2000,
                 resetAt: Date().addingTimeInterval(126 * 60 * 60),
                 accentHex: "#0969DA"
@@ -97,17 +107,21 @@ final class QuotaStore: ObservableObject {
     @Published private(set) var liveServiceNames: Set<String> = []
 
     private let storageKey = "agent-quota-services"
+    private let storageVersionKey = "agent-quota-version"
+    private let currentStorageVersion = 2
     private var timerCancellable: AnyCancellable?
     private var refreshCancellable: AnyCancellable?
 
     init() {
-        if
+        let savedVersion = UserDefaults.standard.integer(forKey: storageVersionKey)
+        if savedVersion == currentStorageVersion,
             let data = UserDefaults.standard.data(forKey: storageKey),
             let savedServices = try? JSONDecoder().decode([QuotaService].self, from: data)
         {
             services = savedServices
         } else {
             services = QuotaService.demoServices()
+            UserDefaults.standard.set(currentStorageVersion, forKey: storageVersionKey)
         }
 
         timerCancellable = Timer.publish(every: 30, on: .main, in: .common)

@@ -57,7 +57,7 @@ enum LiveUsageFetcher {
         }
 
         do {
-            result.updates.append(try fetchAgy())
+            result.updates.append(contentsOf: try fetchAgy())
         } catch {
             let message = "Agy: \(error.localizedDescription)"
             result.issues.append(message)
@@ -87,7 +87,7 @@ enum LiveUsageFetcher {
         )
     }
 
-    private static func fetchAgy() throws -> LiveQuota {
+    private static func fetchAgy() throws -> [LiveQuota] {
         let output = try runSimple(
             name: "agy",
             arguments: ["-p", "/usage", "--output-format", "json"]
@@ -95,24 +95,50 @@ enum LiveUsageFetcher {
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
         let response = try decoder.decode(AgyResponse.self, from: Data(output.utf8))
-        let buckets = response.command.data?.groups.flatMap { group in
-            group.buckets.map { (group.name, $0) }
-        } ?? []
+        let groups = response.command.data?.groups ?? []
 
-        guard
-            let selected = buckets.min(by: { $0.1.remainingFraction < $1.1.remainingFraction }),
-            let resetAt = ISO8601DateFormatter().date(from: selected.1.resetTime)
-        else {
-            throw LiveUsageError.invalidResponse("Agy")
+        // Categorise groups by model family
+        var familyBuckets: [String: [(String, AgyBucket)]] = [:]
+        for group in groups {
+            let nameLower = group.name.lowercased()
+            let family: String
+            if nameLower.contains("claude") {
+                family = "Claude"
+            } else if nameLower.contains("gemini") {
+                family = "Gemini"
+            } else {
+                family = group.name
+            }
+            familyBuckets[family, default: []].append(
+                contentsOf: group.buckets.map { (group.name, $0) }
+            )
         }
 
-        return LiveQuota(
-            serviceName: "Agy",
-            current: Int(((1 - selected.1.remainingFraction) * 100).rounded()),
-            max: 100,
-            resetAt: resetAt,
-            plan: "\(selected.0) · \(selected.1.window == "5h" ? "5h" : "week")"
-        )
+        let isoFormatter = ISO8601DateFormatter()
+        var results: [LiveQuota] = []
+
+        for (family, buckets) in familyBuckets {
+            guard
+                let tightest = buckets.min(by: { $0.1.remainingFraction < $1.1.remainingFraction }),
+                let resetAt = isoFormatter.date(from: tightest.1.resetTime)
+            else {
+                continue
+            }
+
+            let windowLabel = tightest.1.window == "5h" ? "5h" : "week"
+            results.append(LiveQuota(
+                serviceName: "Agy \(family)",
+                current: Int(((1 - tightest.1.remainingFraction) * 100).rounded()),
+                max: 100,
+                resetAt: resetAt,
+                plan: "\(tightest.0) · \(windowLabel)"
+            ))
+        }
+
+        guard !results.isEmpty else {
+            throw LiveUsageError.invalidResponse("Agy")
+        }
+        return results
     }
 
     private static func fetchCodex() throws -> LiveQuota {
