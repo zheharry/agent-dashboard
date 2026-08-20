@@ -49,8 +49,8 @@ struct QuotaService: Identifiable, Codable, Equatable {
                 name: "Claude",
                 plan: "Pro",
                 symbol: "C",
-                current: 18,
-                max: 40,
+                current: 0,
+                max: 100,
                 resetAt: Date().addingTimeInterval(29 * 60 * 60),
                 accentHex: "#D97757"
             ),
@@ -59,7 +59,7 @@ struct QuotaService: Identifiable, Codable, Equatable {
                 name: "Codex",
                 plan: "Plus",
                 symbol: "O",
-                current: 63,
+                current: 0,
                 max: 100,
                 resetAt: Date().addingTimeInterval(8 * 60 * 60),
                 accentHex: "#10A37F"
@@ -108,7 +108,7 @@ final class QuotaStore: ObservableObject {
 
     private let storageKey = "agent-quota-services"
     private let storageVersionKey = "agent-quota-version"
-    private let currentStorageVersion = 2
+    private let currentStorageVersion = 3
     private var timerCancellable: AnyCancellable?
     private var refreshCancellable: AnyCancellable?
 
