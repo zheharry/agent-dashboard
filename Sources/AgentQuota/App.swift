@@ -87,11 +87,11 @@ struct QuotaService: Identifiable, Codable, Equatable {
             QuotaService(
                 id: UUID(),
                 name: "Copilot",
-                plan: "Pro",
+                plan: "Copilot Pro",
                 symbol: "C",
-                current: 2000,
-                max: 2000,
-                resetAt: Date().addingTimeInterval(126 * 60 * 60),
+                current: 1128,
+                max: 1500,
+                resetAt: Date().addingTimeInterval(12 * 24 * 60 * 60),
                 accentHex: "#0969DA"
             ),
         ]
@@ -108,7 +108,7 @@ final class QuotaStore: ObservableObject {
 
     private let storageKey = "agent-quota-services"
     private let storageVersionKey = "agent-quota-version"
-    private let currentStorageVersion = 3
+    private let currentStorageVersion = 4
     private var timerCancellable: AnyCancellable?
     private var refreshCancellable: AnyCancellable?
 
