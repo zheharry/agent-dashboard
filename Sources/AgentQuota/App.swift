@@ -367,6 +367,9 @@ struct QuotaPopoverView: View {
                 .font(.system(size: 10))
                 .foregroundStyle(store.refreshIssues.isEmpty ? Color.secondary : Color.orange)
             Spacer()
+            Text(BuildInfo.displayVersion)
+                .font(.system(size: 9, design: .monospaced))
+                .foregroundStyle(.quaternary)
             Button("重設範例") {
                 store.resetDemoData()
             }
