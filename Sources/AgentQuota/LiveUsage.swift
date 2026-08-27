@@ -7,11 +7,35 @@ struct LiveQuota: Sendable {
     let max: Int
     let resetAt: Date
     let plan: String?
+    let resetWindow: String?  // "5h", "week", "month"
+    let disabledReason: String?
+    let resetNote: String?
+
+    init(
+        serviceName: String,
+        current: Int,
+        max: Int,
+        resetAt: Date,
+        plan: String?,
+        resetWindow: String?,
+        disabledReason: String? = nil,
+        resetNote: String? = nil
+    ) {
+        self.serviceName = serviceName
+        self.current = current
+        self.max = max
+        self.resetAt = resetAt
+        self.plan = plan
+        self.resetWindow = resetWindow
+        self.disabledReason = disabledReason
+        self.resetNote = resetNote
+    }
 }
 
 struct LiveUsageResult: Sendable {
     var updates: [LiveQuota] = []
     var issues: [String] = []
+    var refreshedApps: Set<String> = []
 }
 
 enum LiveUsageError: LocalizedError, Sendable {
@@ -41,7 +65,8 @@ enum LiveUsageFetcher {
         var result = LiveUsageResult()
 
         do {
-            result.updates.append(try fetchClaude())
+            result.updates.append(contentsOf: try fetchClaude())
+            result.refreshedApps.insert("claude")
         } catch {
             let message = "Claude: \(error.localizedDescription)"
             result.issues.append(message)
@@ -49,7 +74,8 @@ enum LiveUsageFetcher {
         }
 
         do {
-            result.updates.append(try fetchCodex())
+            result.updates.append(contentsOf: try fetchCodex())
+            result.refreshedApps.insert("codex")
         } catch {
             let message = "Codex: \(error.localizedDescription)"
             result.issues.append(message)
@@ -58,33 +84,46 @@ enum LiveUsageFetcher {
 
         do {
             result.updates.append(contentsOf: try fetchAgy())
+            result.refreshedApps.insert("agy")
         } catch {
             let message = "Agy: \(error.localizedDescription)"
             result.issues.append(message)
             logger.error("\(message, privacy: .public)")
         }
 
-        result.issues.append("Copilot: GitHub 個人帳號目前沒有可用的 quota endpoint")
+        do {
+            result.updates.append(try fetchCopilot())
+            result.refreshedApps.insert("copilot")
+        } catch {
+            let message = "Copilot: \(error.localizedDescription)"
+            result.issues.append(message)
+            logger.error("\(message, privacy: .public)")
+        }
+
         return result
     }
 
-    private static func fetchClaude() throws -> LiveQuota {
+    private static func fetchClaude() throws -> [LiveQuota] {
         let output = try runSimple(
             name: "claude",
             arguments: ["-p", "/usage", "--output-format", "json", "--no-session-persistence"]
         )
-        let response = try JSONDecoder().decode(ClaudeResponse.self, from: Data(output.utf8))
-        guard let usage = parseClaudeWeeklyUsage(response.result) else {
+        let response = try decodeJSON(ClaudeResponse.self, from: output, provider: "Claude")
+        let usages = parseClaudeUsage(response.result)
+        guard !usages.isEmpty else {
             throw LiveUsageError.invalidResponse("Claude")
         }
-
-        return LiveQuota(
-            serviceName: "Claude",
-            current: usage.usedPercent,
-            max: 100,
-            resetAt: usage.resetAt,
-            plan: nil
-        )
+        return usages.map { usage in
+            LiveQuota(
+                serviceName: "Claude \(usage.window)",
+                current: usage.usedPercent,
+                max: 100,
+                resetAt: usage.resetAt ?? Date(),
+                plan: nil,
+                resetWindow: usage.window,
+                resetNote: usage.resetAt == nil ? "Reset time unavailable" : nil
+            )
+        }
     }
 
     private static func fetchAgy() throws -> [LiveQuota] {
@@ -94,45 +133,47 @@ enum LiveUsageFetcher {
         )
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
-        let response = try decoder.decode(AgyResponse.self, from: Data(output.utf8))
+        let response = try decodeJSON(AgyResponse.self, from: output, provider: "Agy", decoder: decoder)
         let groups = response.command.data?.groups ?? []
 
-        // Categorise groups by model family
-        var familyBuckets: [String: [(String, AgyBucket)]] = [:]
+        // Only monitor the Claude + GPT family; Gemini is intentionally excluded.
+        var familyBuckets: [String: [AgyBucket]] = [:]
         for group in groups {
             let nameLower = group.name.lowercased()
             let family: String
             if nameLower.contains("claude") {
                 family = "Claude"
             } else if nameLower.contains("gemini") {
-                family = "Gemini"
+                continue
             } else {
                 family = group.name
             }
-            familyBuckets[family, default: []].append(
-                contentsOf: group.buckets.map { (group.name, $0) }
-            )
+            familyBuckets[family, default: []].append(contentsOf: group.buckets)
         }
 
         let isoFormatter = ISO8601DateFormatter()
         var results: [LiveQuota] = []
 
         for (family, buckets) in familyBuckets {
-            guard
-                let tightest = buckets.min(by: { $0.1.remainingFraction < $1.1.remainingFraction }),
-                let resetAt = isoFormatter.date(from: tightest.1.resetTime)
-            else {
-                continue
+            let familyResetAt = buckets.compactMap { bucket in
+                bucket.resetTime.flatMap(isoFormatter.date(from:))
+            }.max() ?? Date()
+            for bucket in buckets {
+                let resetAt = bucket.resetTime.flatMap(isoFormatter.date(from:)) ?? familyResetAt
+                if bucket.disabled != true && bucket.resetTime == nil {
+                    continue
+                }
+                let windowLabel = bucket.window == "5h" ? "5h" : "weekly"
+                results.append(LiveQuota(
+                    serviceName: "Agy \(family) \(windowLabel)",
+                    current: Int(((1 - bucket.remainingFraction) * 100).rounded()),
+                    max: 100,
+                    resetAt: resetAt,
+                    plan: "Pro",
+                    resetWindow: windowLabel,
+                    disabledReason: bucket.disabled == true ? "Weekly limit reached" : nil
+                ))
             }
-
-            let windowLabel = tightest.1.window == "5h" ? "5h" : "week"
-            results.append(LiveQuota(
-                serviceName: "Agy \(family)",
-                current: Int(((1 - tightest.1.remainingFraction) * 100).rounded()),
-                max: 100,
-                resetAt: resetAt,
-                plan: "\(tightest.0) · \(windowLabel)"
-            ))
         }
 
         guard !results.isEmpty else {
@@ -141,40 +182,91 @@ enum LiveUsageFetcher {
         return results
     }
 
-    private static func fetchCodex() throws -> LiveQuota {
+    private static func fetchCodex() throws -> [LiveQuota] {
         let response = try runCodexRateLimitRequest()
         let windows = [
             ("primary", response.rateLimits.primary),
             ("secondary", response.rateLimits.secondary),
         ]
-        guard
-            let selected = windows.compactMap({ label, window in
-                window.map { (label, $0) }
-            }).max(by: { $0.1.usedPercent < $1.1.usedPercent }),
-            let resetTimestamp = selected.1.resetsAt
-        else {
+        let available = windows.compactMap { label, window -> (String, CodexRateLimitWindow)? in
+            window.map { (label, $0) }
+        }
+        guard !available.isEmpty else {
             throw LiveUsageError.invalidResponse("Codex")
         }
+        return available.compactMap { fallbackLabel, window in
+            guard let resetTimestamp = window.resetsAt else { return nil }
+            let windowLabel: String
+            switch window.windowDurationMins {
+            case 300: windowLabel = "5h"
+            case 10_080: windowLabel = "weekly"
+            default: windowLabel = fallbackLabel
+            }
+            return LiveQuota(
+                serviceName: "Codex \(windowLabel)",
+                current: window.usedPercent,
+                max: 100,
+                resetAt: Date(timeIntervalSince1970: TimeInterval(resetTimestamp)),
+                plan: response.rateLimits.planType,
+                resetWindow: windowLabel
+            )
+        }
+    }
 
-        let windowLabel: String
-        switch selected.1.windowDurationMins {
-        case 300:
-            windowLabel = "5h"
-        case 10_080:
-            windowLabel = "week"
-        default:
-            windowLabel = selected.0
+    private static func fetchCopilot() throws -> LiveQuota {
+        let login = try runSimple(name: "gh", arguments: ["api", "user", "--jq", ".login"])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !login.isEmpty else {
+            throw LiveUsageError.invalidResponse("Copilot")
         }
 
+        let output = try runSimple(
+            name: "gh",
+            arguments: ["api", "/users/\(login)/settings/billing/usage"]
+        )
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        let response = try decoder.decode(GitHubUsageResponse.self, from: Data(output.utf8))
+
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0) ?? TimeZone(identifier: "GMT")!
+        let now = Date()
+        let currentMonth = calendar.dateComponents([.year, .month], from: now)
+        guard
+            let monthStart = calendar.date(from: DateComponents(
+                timeZone: calendar.timeZone,
+                year: currentMonth.year,
+                month: currentMonth.month,
+                day: 1
+            )),
+            let nextReset = calendar.date(byAdding: .month, value: 1, to: monthStart),
+            let year = currentMonth.year,
+            let month = currentMonth.month
+        else {
+            throw LiveUsageError.invalidResponse("Copilot")
+        }
+
+        let monthPrefix = String(format: "%04d-%02d", year, month)
+        let copilotItems = response.usageItems.filter {
+            $0.product.caseInsensitiveCompare("copilot") == .orderedSame &&
+                $0.date.hasPrefix(monthPrefix)
+        }
+        let creditItems = copilotItems.filter {
+            $0.sku.localizedCaseInsensitiveContains("AI Credit")
+        }
+        let sourceItems = creditItems.isEmpty ? copilotItems : creditItems
+        guard !sourceItems.isEmpty else {
+            throw LiveUsageError.invalidResponse("Copilot")
+        }
+
+        let usedCredits = sourceItems.reduce(0.0) { $0 + $1.quantity }
         return LiveQuota(
-            serviceName: "Codex",
-            current: selected.1.usedPercent,
-            max: 100,
-            resetAt: Date(timeIntervalSince1970: TimeInterval(resetTimestamp)),
-            plan: [response.rateLimits.planType, windowLabel]
-                .compactMap { $0?.isEmpty == false ? $0 : nil }
-                .joined(separator: " · ")
-                .optionalIfNotEmpty
+            serviceName: "Copilot",
+            current: Int(usedCredits.rounded()),
+            max: 1_500,
+            resetAt: nextReset,
+            plan: "Copilot Pro · AI credits",
+            resetWindow: "month"
         )
     }
 
@@ -216,6 +308,26 @@ enum LiveUsageFetcher {
             throw LiveUsageError.processFailed(name, errorOutput.trimmingCharacters(in: .whitespacesAndNewlines))
         }
         return output
+    }
+
+    private static func decodeJSON<T: Decodable>(
+        _ type: T.Type,
+        from output: String,
+        provider: String,
+        decoder: JSONDecoder = JSONDecoder()
+    ) throws -> T {
+        guard
+            let start = output.firstIndex(of: "{"),
+            let end = output.lastIndex(of: "}")
+        else {
+            throw LiveUsageError.invalidResponse(provider)
+        }
+
+        do {
+            return try decoder.decode(T.self, from: Data(output[start...end].utf8))
+        } catch {
+            throw LiveUsageError.processFailed(provider, error.localizedDescription)
+        }
     }
 
     private static func runCodexRateLimitRequest() throws -> CodexRateLimitResponse {
@@ -293,15 +405,17 @@ enum LiveUsageFetcher {
         process.currentDirectoryURL = FileManager.default.homeDirectoryForCurrentUser
     }
 
-    private static func parseClaudeWeeklyUsage(_ text: String) -> ClaudeUsage? {
-        guard
-            let line = text.split(whereSeparator: \.isNewline).first(where: {
-                $0.hasPrefix("Current week (all models):")
-            })
-        else {
+    private static func parseClaudeUsage(_ text: String) -> [ClaudeUsage] {
+        text.split(whereSeparator: \.isNewline).compactMap { rawLine in
+        let line = String(rawLine)
+        let window: String
+        if line.localizedCaseInsensitiveContains("current session") || line.localizedCaseInsensitiveContains("5 hour") {
+            window = "5h"
+        } else if line.localizedCaseInsensitiveContains("current week") {
+            window = "weekly"
+        } else {
             return nil
         }
-
         let parts = line.split(separator: "·", maxSplits: 1).map(String.init)
         guard
             let percentPart = parts.first,
@@ -309,18 +423,19 @@ enum LiveUsageFetcher {
                 .trimmingCharacters(in: .whitespaces)
                 .split(separator: "%")
                 .first,
-            let usedPercent = Int(percentText),
-            parts.count == 2,
-            let resetAt = parseClaudeDate(
+            let usedPercent = Int(percentText)
+        else {
+            return nil
+        }
+        let resetAt = parts.count == 2
+            ? parseClaudeDate(
                 parts[1]
                     .replacingOccurrences(of: "resets ", with: "")
                     .trimmingCharacters(in: .whitespacesAndNewlines)
             )
-        else {
-            return nil
+            : nil
+        return ClaudeUsage(window: window, usedPercent: usedPercent, resetAt: resetAt)
         }
-
-        return ClaudeUsage(usedPercent: usedPercent, resetAt: resetAt)
     }
 
     private static func parseClaudeDate(_ value: String) -> Date? {
@@ -368,8 +483,9 @@ private struct ClaudeResponse: Decodable {
 }
 
 private struct ClaudeUsage {
+    let window: String
     let usedPercent: Int
-    let resetAt: Date
+    let resetAt: Date?
 }
 
 private struct AgyResponse: Decodable {
@@ -392,7 +508,8 @@ private struct AgyGroup: Decodable {
 private struct AgyBucket: Decodable {
     let window: String
     let remainingFraction: Double
-    let resetTime: String
+    let resetTime: String?
+    let disabled: Bool?
 }
 
 private struct CodexRPCResponse: Decodable {
@@ -413,6 +530,17 @@ private struct CodexRateLimitWindow: Decodable {
     let usedPercent: Int
     let windowDurationMins: Int64?
     let resetsAt: Int64?
+}
+
+private struct GitHubUsageResponse: Decodable {
+    let usageItems: [GitHubUsageItem]
+}
+
+private struct GitHubUsageItem: Decodable {
+    let date: String
+    let product: String
+    let quantity: Double
+    let sku: String
 }
 
 private final class CodexResponseCollector: @unchecked Sendable {
