@@ -84,7 +84,8 @@ enum LiveUsageFetcher {
 
         do {
             result.updates.append(contentsOf: try fetchAgy())
-            result.refreshedApps.insert("agy")
+            result.refreshedApps.insert("agy claude/gpt")
+            result.refreshedApps.insert("agy gemini")
         } catch {
             let message = "Agy: \(error.localizedDescription)"
             result.issues.append(message)
@@ -96,6 +97,15 @@ enum LiveUsageFetcher {
             result.refreshedApps.insert("copilot")
         } catch {
             let message = "Copilot: \(error.localizedDescription)"
+            result.issues.append(message)
+            logger.error("\(message, privacy: .public)")
+        }
+
+        do {
+            result.updates.append(try fetchGrok())
+            result.refreshedApps.insert("grok")
+        } catch {
+            let message = "Grok: \(error.localizedDescription)"
             result.issues.append(message)
             logger.error("\(message, privacy: .public)")
         }
@@ -136,7 +146,6 @@ enum LiveUsageFetcher {
         let response = try decodeJSON(AgyResponse.self, from: output, provider: "Agy", decoder: decoder)
         let groups = response.command.data?.groups ?? []
 
-        // Only monitor the Claude + GPT family; Gemini is intentionally excluded.
         var familyBuckets: [String: [AgyBucket]] = [:]
         for group in groups {
             let nameLower = group.name.lowercased()
@@ -144,7 +153,7 @@ enum LiveUsageFetcher {
             if nameLower.contains("claude") {
                 family = "Claude"
             } else if nameLower.contains("gemini") {
-                continue
+                family = "Gemini"
             } else {
                 family = group.name
             }
@@ -255,10 +264,9 @@ enum LiveUsageFetcher {
             $0.sku.localizedCaseInsensitiveContains("AI Credit")
         }
         let sourceItems = creditItems.isEmpty ? copilotItems : creditItems
-        guard !sourceItems.isEmpty else {
-            throw LiveUsageError.invalidResponse("Copilot")
-        }
 
+        // When no items exist for the current month (e.g. first day after reset
+        // with zero usage), treat it as 0 used instead of an error.
         let usedCredits = sourceItems.reduce(0.0) { $0 + $1.quantity }
         return LiveQuota(
             serviceName: "Copilot",
@@ -268,6 +276,104 @@ enum LiveUsageFetcher {
             plan: "Copilot Pro · AI credits",
             resetWindow: "month"
         )
+    }
+
+    private static func fetchGrok() throws -> LiveQuota {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let authURL = home.appendingPathComponent(".grok/auth.json")
+        let authData: Data
+        do {
+            authData = try Data(contentsOf: authURL)
+        } catch {
+            throw LiveUsageError.processFailed("Grok", "not signed in; run `grok login`")
+        }
+
+        let authRecords: [String: GrokAuthRecord]
+        do {
+            authRecords = try JSONDecoder().decode([String: GrokAuthRecord].self, from: authData)
+        } catch {
+            throw LiveUsageError.invalidResponse("Grok auth")
+        }
+        guard let token = authRecords.values.first(where: { !$0.key.isEmpty })?.key else {
+            throw LiveUsageError.processFailed("Grok", "not signed in; run `grok login`")
+        }
+
+        guard let billingURL = URL(string: "https://cli-chat-proxy.grok.com/v1/billing?format=credits") else {
+            throw LiveUsageError.invalidResponse("Grok")
+        }
+        var request = URLRequest(url: billingURL)
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue(
+            "agent-quota/1.0 (personal research; local app)",
+            forHTTPHeaderField: "User-Agent"
+        )
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+
+        let responseData = try runRequest(name: "Grok", request: request)
+        let response: GrokBillingResponse
+        do {
+            response = try JSONDecoder().decode(GrokBillingResponse.self, from: responseData)
+        } catch {
+            throw LiveUsageError.processFailed("Grok", "invalid billing response: \(error.localizedDescription)")
+        }
+
+        let latestHistory = (response.config.history ?? response.history)?.last
+        let usagePercent = response.creditUsagePercent
+            ?? response.config.creditUsagePercent
+            ?? latestHistory?.creditUsagePercent
+        let period = response.config.currentPeriod
+        let resetText = period?.end ?? response.config.billingPeriodEnd ?? latestHistory?.end
+        let resetAt = resetText.flatMap { ISO8601DateFormatter().date(from: $0) }
+        guard let resetAt else {
+            throw LiveUsageError.invalidResponse("Grok")
+        }
+
+        let window = grokWindow(for: period?.type)
+        let isLimitedFree = usagePercent == nil
+            && latestHistory == nil
+            && response.config.onDemandCap?.val == 0
+        let plan = isLimitedFree ? "Free" : grokPlan(from: latestHistory?.subscriptionTier)
+        return LiveQuota(
+            serviceName: "Grok",
+            current: Int((usagePercent ?? 0).rounded()),
+            max: usagePercent == nil ? 0 : 100,
+            resetAt: resetAt,
+            plan: plan,
+            resetWindow: window,
+            resetNote: usagePercent == nil
+                ? (isLimitedFree ? "Free limit · usage unavailable" : "Usage amount unavailable")
+                : nil
+        )
+    }
+
+    private static func grokWindow(for rawType: String?) -> String {
+        switch rawType?.lowercased() {
+        case let value? where value.contains("month"):
+            return "month"
+        case let value? where value.contains("week"):
+            return "weekly"
+        default:
+            return "period"
+        }
+    }
+
+    private static func grokPlan(from rawTier: String?) -> String {
+        guard let tier = rawTier?.lowercased() else {
+            return "Grok Build"
+        }
+        if tier.contains("heavy") {
+            return "SuperGrok Heavy"
+        }
+        if tier.contains("plus") {
+            return "SuperGrok Plus"
+        }
+        if tier.contains("super") {
+            return "SuperGrok"
+        }
+        if tier.contains("free") {
+            return "Free"
+        }
+        return "Grok Build"
     }
 
     private static func runSimple(name: String, arguments: [String]) throws -> String {
@@ -308,6 +414,31 @@ enum LiveUsageFetcher {
             throw LiveUsageError.processFailed(name, errorOutput.trimmingCharacters(in: .whitespacesAndNewlines))
         }
         return output
+    }
+
+    private static func runRequest(name: String, request: URLRequest) throws -> Data {
+        let collector = HTTPResponseCollector()
+        let task = URLSession.shared.dataTask(with: request) { data, response, error in
+            collector.finish(data: data, response: response, error: error)
+        }
+        task.resume()
+
+        if collector.finished.wait(timeout: .now() + 45) == .timedOut {
+            task.cancel()
+            throw LiveUsageError.timedOut(name)
+        }
+        if let error = collector.error {
+            throw LiveUsageError.processFailed(name, error.localizedDescription)
+        }
+        guard
+            let response = collector.response as? HTTPURLResponse,
+            (200..<300).contains(response.statusCode),
+            let data = collector.data
+        else {
+            let status = (collector.response as? HTTPURLResponse)?.statusCode
+            throw LiveUsageError.processFailed(name, status.map { "HTTP \($0)" } ?? "no response")
+        }
+        return data
     }
 
     private static func decodeJSON<T: Decodable>(
@@ -541,6 +672,56 @@ private struct GitHubUsageItem: Decodable {
     let product: String
     let quantity: Double
     let sku: String
+}
+
+private struct GrokAuthRecord: Decodable {
+    let key: String
+}
+
+private struct GrokBillingResponse: Decodable {
+    let config: GrokBillingConfig
+    let history: [GrokBillingHistory]?
+    let creditUsagePercent: Double?
+}
+
+private struct GrokBillingConfig: Decodable {
+    let currentPeriod: GrokBillingPeriod?
+    let billingPeriodEnd: String?
+    let creditUsagePercent: Double?
+    let history: [GrokBillingHistory]?
+    let onDemandCap: GrokAmount?
+}
+
+private struct GrokBillingHistory: Decodable {
+    let end: String?
+    let creditUsagePercent: Double?
+    let subscriptionTier: String?
+}
+
+private struct GrokBillingPeriod: Decodable {
+    let type: String?
+    let end: String
+}
+
+private struct GrokAmount: Decodable {
+    let val: Double
+}
+
+private final class HTTPResponseCollector: @unchecked Sendable {
+    let finished = DispatchSemaphore(value: 0)
+    private let lock = NSLock()
+    private(set) var data: Data?
+    private(set) var response: URLResponse?
+    private(set) var error: Error?
+
+    func finish(data: Data?, response: URLResponse?, error: Error?) {
+        lock.lock()
+        self.data = data
+        self.response = response
+        self.error = error
+        lock.unlock()
+        finished.signal()
+    }
 }
 
 private final class CodexResponseCollector: @unchecked Sendable {

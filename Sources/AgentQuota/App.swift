@@ -41,7 +41,10 @@ struct QuotaService: Identifiable, Codable, Equatable {
     }
 
     var percentLabel: String {
-        "\(Int((percentage * 100).rounded()))%"
+        guard max > 0 else {
+            return "N/A"
+        }
+        return "\(Int((percentage * 100).rounded()))%"
     }
 
     var accentColor: Color {
@@ -115,9 +118,9 @@ struct QuotaService: Identifiable, Codable, Equatable {
             ),
             QuotaService(
                 id: UUID(),
-                appName: "Agy",
+                appName: "Agy Claude/GPT",
                 name: "Agy Claude 5h",
-                quotaLabel: "Claude + GPT · 5 小時",
+                quotaLabel: "Claude/GPT · 5 小時",
                 plan: "Pro",
                 symbol: "A",
                 current: 0,
@@ -128,15 +131,41 @@ struct QuotaService: Identifiable, Codable, Equatable {
             ),
             QuotaService(
                 id: UUID(),
-                appName: "Agy",
+                appName: "Agy Claude/GPT",
                 name: "Agy Claude weekly",
-                quotaLabel: "Claude + GPT · 每週",
+                quotaLabel: "Claude/GPT · 每週",
                 plan: "Pro",
                 symbol: "A",
                 current: 0,
                 max: 100,
                 resetAt: Date().addingTimeInterval(6 * 24 * 60 * 60),
                 accentHex: "#D97757",
+                resetWindow: "week"
+            ),
+            QuotaService(
+                id: UUID(),
+                appName: "Agy Gemini",
+                name: "Agy Gemini 5h",
+                quotaLabel: "Gemini · 5 小時",
+                plan: "Pro",
+                symbol: "A",
+                current: 0,
+                max: 100,
+                resetAt: Date().addingTimeInterval(5 * 60 * 60),
+                accentHex: "#4285F4",
+                resetWindow: "5h"
+            ),
+            QuotaService(
+                id: UUID(),
+                appName: "Agy Gemini",
+                name: "Agy Gemini weekly",
+                quotaLabel: "Gemini · 每週",
+                plan: "Pro",
+                symbol: "A",
+                current: 0,
+                max: 100,
+                resetAt: Date().addingTimeInterval(6 * 24 * 60 * 60),
+                accentHex: "#4285F4",
                 resetWindow: "week"
             ),
             QuotaService(
@@ -152,6 +181,20 @@ struct QuotaService: Identifiable, Codable, Equatable {
                 accentHex: "#0969DA",
                 resetWindow: "month"
             ),
+            QuotaService(
+                id: UUID(),
+                appName: "Grok",
+                name: "Grok",
+                quotaLabel: "每週 Credits",
+                plan: "Grok Build",
+                symbol: "G",
+                current: 0,
+                max: 0,
+                resetAt: Date().addingTimeInterval(7 * 24 * 60 * 60),
+                accentHex: "#6D5DFB",
+                resetWindow: "week",
+                resetNote: "Usage amount unavailable"
+            ),
         ]
     }
 }
@@ -166,7 +209,8 @@ final class QuotaStore: ObservableObject {
 
     private let storageKey = "agent-quota-services"
     private let storageVersionKey = "agent-quota-version"
-    private let currentStorageVersion = 6
+    private let grokMigrationKey = "agent-quota-grok-migrated"
+    private let currentStorageVersion = 8
     private var timerCancellable: AnyCancellable?
     private var refreshCancellable: AnyCancellable?
 
@@ -182,10 +226,15 @@ final class QuotaStore: ObservableObject {
             UserDefaults.standard.set(currentStorageVersion, forKey: storageVersionKey)
         }
 
-        // The user does not monitor AGY Gemini; remove previously persisted entries too.
-        services.removeAll {
-            $0.appName.caseInsensitiveCompare("Agy") == .orderedSame &&
-                $0.name.localizedCaseInsensitiveContains("Gemini")
+        if !UserDefaults.standard.bool(forKey: grokMigrationKey) {
+            if !services.contains(where: { $0.appName.caseInsensitiveCompare("Grok") == .orderedSame }),
+                let grok = QuotaService.demoServices().first(where: {
+                    $0.appName.caseInsensitiveCompare("Grok") == .orderedSame
+                })
+            {
+                services.append(grok)
+            }
+            UserDefaults.standard.set(true, forKey: grokMigrationKey)
         }
         if let data = try? JSONEncoder().encode(services) {
             UserDefaults.standard.set(data, forKey: storageKey)
@@ -613,10 +662,8 @@ private struct AppQuotaCard: View {
             }
 
             HStack(alignment: .top, spacing: 12) {
-                ForEach(ringGroups) { ringGroup in
-                    ConcentricQuotaGauge(group: ringGroup) { service in
-                        onEdit(service)
-                    }
+                ConcentricQuotaGauge(group: ringGroup) { service in
+                    onEdit(service)
                 }
             }
             .frame(maxWidth: .infinity)
@@ -637,23 +684,13 @@ private struct AppQuotaCard: View {
         return group.quotas.filter { liveServiceNames.contains($0.name.lowercased()) }
     }
 
-    private var ringGroups: [QuotaRingGroup] {
-        Dictionary(grouping: displayedQuotas) { service in
-            let name = service.name.lowercased()
-            if group.name.caseInsensitiveCompare("Agy") == .orderedSame {
-                return name.contains("gemini") ? "Gemini" : "Claude + GPT"
-            }
-            return group.name
-        }
-        .map {
-            QuotaRingGroup(
-                name: $0.key,
-                quotas: $0.value,
-                showsFiveHourNA: ["codex", "claude", "agy"].contains(group.name.lowercased()) &&
-                    !$0.value.contains { $0.resetWindow?.lowercased() == "5h" }
-            )
-        }
-        .sorted { $0.name < $1.name }
+    private var ringGroup: QuotaRingGroup {
+        QuotaRingGroup(
+            name: group.name,
+            quotas: displayedQuotas,
+            showsFiveHourNA: ["codex", "claude", "agy claude/gpt", "agy gemini"].contains(group.name.lowercased()) &&
+                !displayedQuotas.contains { $0.resetWindow?.lowercased() == "5h" }
+        )
     }
 }
 
@@ -722,11 +759,6 @@ private struct ConcentricQuotaGauge: View {
             .buttonStyle(.plain)
 
             VStack(alignment: .leading, spacing: 5) {
-                if group.name != "Claude" && group.name != "Codex" && group.name != "Copilot" {
-                    Text(group.name)
-                        .font(.system(size: 10, weight: .semibold))
-                        .lineLimit(1)
-                }
                 ForEach(orderedQuotas) { service in
                     Button { onEdit(service) } label: {
                         VStack(alignment: .leading, spacing: 1) {
@@ -861,6 +893,10 @@ private enum AgentAppIcon {
             "/Applications/Copilot.app",
             "~/Applications/Copilot.app",
         ],
+        "grok": [
+            "/Applications/Grok.app",
+            "~/Applications/Grok.app",
+        ],
     ]
 
     private static let imagePaths: [String: [String]] = [
@@ -891,6 +927,23 @@ private enum AgentAppIcon {
                 continue
             }
 
+            // Try to load the high-res icon directly from the app bundle's icns file
+            // instead of NSWorkspace.shared.icon(forFile:) which returns a low-quality composite
+            let bundle = Bundle(path: expandedPath)
+            let iconFile = bundle?.infoDictionary?["CFBundleIconFile"] as? String
+            if let iconFile = iconFile {
+                let iconName = iconFile.hasSuffix(".icns") ? iconFile : "\(iconFile).icns"
+                if let resourcePath = bundle?.resourcePath {
+                    let iconPath = (resourcePath as NSString).appendingPathComponent(iconName)
+                    if let image = NSImage(contentsOfFile: iconPath) {
+                        image.isTemplate = provider == "codex"
+                        image.size = NSSize(width: 28, height: 28)
+                        return image
+                    }
+                }
+            }
+
+            // Fallback to NSWorkspace icon
             let image = NSWorkspace.shared.icon(forFile: expandedPath)
             image.isTemplate = provider == "codex"
             image.size = NSSize(width: 28, height: 28)
@@ -913,6 +966,8 @@ private enum AgentAppIcon {
             return "wand.and.stars"
         case "copilot":
             return "person.crop.circle.badge.checkmark"
+        case "grok":
+            return "bolt.fill"
         default:
             return nil
         }
@@ -935,6 +990,9 @@ private enum AgentAppIcon {
         }
         if name == "copilot" {
             return "copilot"
+        }
+        if name == "grok" {
+            return "grok"
         }
         return nil
     }
