@@ -531,7 +531,7 @@ fn parse_iso_datetime(value: &str) -> Option<DateTime<Utc>> {
     DateTime::parse_from_rfc3339(value).ok().map(|value| value.with_timezone(&Utc))
 }
 
-fn extract_json_object(output: &str, provider: &str) -> Result<&str, LiveUsageError> {
+fn extract_json_object<'a>(output: &'a str, provider: &str) -> Result<&'a str, LiveUsageError> {
     let start = output
         .find('{')
         .ok_or_else(|| LiveUsageError::InvalidResponse(provider.into()))?;

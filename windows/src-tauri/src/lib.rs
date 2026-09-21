@@ -1,4 +1,4 @@
-mod model;
+pub mod model;
 pub mod live_usage;
 pub mod storage;
 
@@ -222,7 +222,7 @@ async fn refresh_and_emit(app: &AppHandle, state: AppState) -> Result<DashboardS
 fn toggle_main_window(app: &AppHandle) -> tauri::Result<()> {
     let window = app
         .get_webview_window("main")
-        .ok_or_else(|| tauri::Error::Anyhow(anyhow::anyhow!("main window missing")))?;
+        .ok_or_else(|| tauri::Error::Io(std::io::Error::other("main window missing")))?;
 
     if window.is_visible()? {
         window.hide()?;
@@ -242,18 +242,19 @@ pub fn run() {
         .setup(|app| {
             let main_window = app
                 .get_webview_window("main")
-                .ok_or_else(|| tauri::Error::Anyhow(anyhow::anyhow!("main window missing")))?;
+                .ok_or_else(|| tauri::Error::Io(std::io::Error::other("main window missing")))?;
             main_window.hide()?;
 
             let state = AppState::new(QuotaStorage::new(storage::default_store_path()))
-                .map_err(|error| tauri::Error::Anyhow(anyhow::anyhow!(error)))?;
+                .map_err(std::io::Error::other)
+                .map_err(tauri::Error::Io)?;
             app.manage(state.clone());
 
             let menu = MenuBuilder::new(app).build()?;
             let icon = app
                 .default_window_icon()
                 .cloned()
-                .ok_or_else(|| tauri::Error::Anyhow(anyhow::anyhow!("tray icon missing")))?;
+                .ok_or_else(|| tauri::Error::Io(std::io::Error::other("tray icon missing")))?;
 
             TrayIconBuilder::with_id("agent-quota")
                 .icon(icon)
