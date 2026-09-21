@@ -27,7 +27,7 @@ struct QuotaStore {
     services: Vec<QuotaService>,
     refresh_issues: Vec<String>,
     last_refresh_at: Option<DateTime<Utc>>,
-    live_service_names: HashSet<String>,
+    live_service_keys: HashSet<String>,
     is_refreshing: bool,
 }
 
@@ -42,7 +42,7 @@ impl AppState {
                 services,
                 refresh_issues: Vec::new(),
                 last_refresh_at: None,
-                live_service_names: HashSet::new(),
+                live_service_keys: HashSet::new(),
                 is_refreshing: false,
             })),
         })
@@ -56,7 +56,7 @@ impl QuotaStore {
             refresh_issues: self.refresh_issues.clone(),
             last_refresh_at: self.last_refresh_at,
             is_refreshing: self.is_refreshing,
-            live_service_names: self.live_service_names.iter().cloned().collect(),
+            live_service_names: self.live_service_keys.iter().cloned().collect(),
             refresh_status_text: self.refresh_status_text(),
         }
     }
@@ -66,10 +66,10 @@ impl QuotaStore {
             return "同步中…".into();
         }
         if let Some(last_refresh_at) = self.last_refresh_at {
-            let synced_text = if self.live_service_names.is_empty() {
+            let synced_text = if self.live_service_keys.is_empty() {
                 "尚未取得 live data".to_string()
             } else {
-                format!("已同步 {} 個服務", self.live_service_names.len())
+                format!("已同步 {} 個服務", self.live_service_keys.len())
             };
             return format!("{synced_text} · {}", last_refresh_at.with_timezone(&Local).format("%H:%M"));
         }
@@ -81,8 +81,8 @@ impl QuotaStore {
             .services
             .iter()
             .filter_map(|service| {
-                self.live_service_names
-                    .contains(&service.name.to_lowercase())
+                self.live_service_keys
+                    .contains(&service.provider_key())
                     .then(|| service.app_name.clone())
             })
             .collect();
@@ -90,7 +90,7 @@ impl QuotaStore {
             .iter()
             .filter(|service| {
                 !live_apps.contains(&service.app_name)
-                    || self.live_service_names.contains(&service.name.to_lowercase())
+                    || self.live_service_keys.contains(&service.provider_key())
             })
             .cloned()
             .collect()
@@ -113,8 +113,8 @@ impl QuotaStore {
 
     fn delete(&mut self, id: Uuid) -> Result<(), String> {
         self.services.retain(|service| service.id != id);
-        self.live_service_names
-            .retain(|service_name| self.services.iter().any(|service| service.name.eq_ignore_ascii_case(service_name)));
+        self.live_service_keys
+            .retain(|service_key| self.services.iter().any(|service| service.provider_key() == *service_key));
         self.persist()
     }
 
@@ -122,7 +122,7 @@ impl QuotaStore {
         self.services = QuotaService::demo_services();
         self.refresh_issues.clear();
         self.last_refresh_at = None;
-        self.live_service_names.clear();
+        self.live_service_keys.clear();
         self.persist()
     }
 
@@ -132,14 +132,21 @@ impl QuotaStore {
             .iter()
             .filter(|service| result.refreshed_apps.iter().any(|app| service.app_name.eq_ignore_ascii_case(app)))
         {
-            self.live_service_names.remove(&service.name.to_lowercase());
+            self.live_service_keys.remove(&service.provider_key());
         }
 
         for update in result.updates {
             if let Some(index) = self
                 .services
                 .iter()
-                .position(|service| service.name.eq_ignore_ascii_case(&update.service_name))
+                .position(|service| {
+                    service.app_name.eq_ignore_ascii_case(&update.app_name)
+                        && service
+                            .reset_window
+                            .as_deref()
+                            .unwrap_or_default()
+                            .eq_ignore_ascii_case(update.reset_window.as_deref().unwrap_or_default())
+                })
             {
                 let service = &mut self.services[index];
                 service.current = update.current;
@@ -153,7 +160,7 @@ impl QuotaStore {
                 }
                 service.disabled_reason = update.disabled_reason;
                 service.reset_note = update.reset_note;
-                self.live_service_names.insert(update.service_name.to_lowercase());
+                self.live_service_keys.insert(service.provider_key());
             }
         }
 

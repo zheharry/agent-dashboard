@@ -11,6 +11,7 @@ use tokio::{
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LiveQuota {
+    pub app_name: String,
     pub service_name: String,
     pub current: i64,
     pub max: i64,
@@ -143,6 +144,7 @@ pub async fn fetch_grok() -> Result<LiveQuota, LiveUsageError> {
 
     let client = reqwest::Client::builder()
         .user_agent("agent-quota/1.0 (personal research; local app)")
+        .timeout(Duration::from_secs(45))
         .build()
         .map_err(|error| LiveUsageError::ProcessFailed("Grok".into(), error.to_string()))?;
 
@@ -181,6 +183,7 @@ pub fn parse_claude_response(output: &str, now: DateTime<Utc>) -> Result<Vec<Liv
     Ok(usages
         .into_iter()
         .map(|usage| LiveQuota {
+            app_name: "Claude".into(),
             service_name: format!("Claude {}", usage.window),
             current: usage.used_percent,
             max: 100,
@@ -230,6 +233,13 @@ pub fn parse_agy_response(output: &str) -> Result<Vec<LiveQuota>, LiveUsageError
                 .unwrap_or(family_reset);
             let window_label = if bucket.window == "5h" { "5h" } else { "weekly" };
             results.push(LiveQuota {
+                app_name: if family == "Claude" {
+                    "Agy Claude/GPT".into()
+                } else if family == "Gemini" {
+                    "Agy Gemini".into()
+                } else {
+                    format!("Agy {family}")
+                },
                 service_name: format!("Agy {family} {window_label}"),
                 current: ((1.0 - bucket.remaining_fraction) * 100.0).round() as i64,
                 max: 100,
@@ -279,6 +289,7 @@ pub fn parse_codex_response(output: &str) -> Result<Vec<LiveQuota>, LiveUsageErr
             _ => fallback_label,
         };
         quotas.push(LiveQuota {
+            app_name: "Codex".into(),
             service_name: format!("Codex {window_label}"),
             current: window.used_percent,
             max: 100,
@@ -316,10 +327,6 @@ pub fn parse_copilot_response(output: &str, now: DateTime<Utc>) -> Result<LiveQu
     let source_items = if credit_items.is_empty() { current_month_items } else { credit_items };
     let used_credits = source_items.iter().fold(0.0, |sum, item| sum + item.quantity);
 
-    let month_start = Utc
-        .with_ymd_and_hms(now.year(), now.month(), 1, 0, 0, 0)
-        .single()
-        .ok_or_else(|| LiveUsageError::InvalidResponse("Copilot".into()))?;
     let next_reset = if now.month() == 12 {
         Utc.with_ymd_and_hms(now.year() + 1, 1, 1, 0, 0, 0)
             .single()
@@ -329,9 +336,8 @@ pub fn parse_copilot_response(output: &str, now: DateTime<Utc>) -> Result<LiveQu
             .single()
             .ok_or_else(|| LiveUsageError::InvalidResponse("Copilot".into()))?
     };
-    let _ = month_start;
-
     Ok(LiveQuota {
+        app_name: "Copilot".into(),
         service_name: "Copilot".into(),
         current: used_credits.round().min(1_500.0) as i64,
         max: 1_500,
@@ -385,6 +391,7 @@ pub fn parse_grok_billing_response(output: &str) -> Result<LiveQuota, LiveUsageE
     };
 
     Ok(LiveQuota {
+        app_name: "Grok".into(),
         service_name: "Grok".into(),
         current: usage_percent.unwrap_or(0.0).round() as i64,
         max: if usage_percent.is_none() { 0 } else { 100 },

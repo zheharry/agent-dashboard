@@ -35,10 +35,14 @@ impl QuotaStorage {
         let contents = fs::read_to_string(&self.path)?;
         let store: StoreFile = match serde_json::from_str(&contents) {
             Ok(store) => store,
-            Err(_) => return Ok(QuotaService::demo_services()),
+            Err(_) => {
+                self.backup_existing_store("invalid")?;
+                return Ok(QuotaService::demo_services());
+            }
         };
 
         if store.storage_version != STORAGE_VERSION {
+            self.backup_existing_store(&format!("v{}", store.storage_version))?;
             return Ok(QuotaService::demo_services());
         }
 
@@ -57,6 +61,21 @@ impl QuotaStorage {
         let encoded = serde_json::to_string_pretty(&payload)
             .map_err(|error| io::Error::other(error.to_string()))?;
         fs::write(&self.path, encoded)
+    }
+
+    fn backup_existing_store(&self, suffix: &str) -> io::Result<()> {
+        if !self.path.exists() {
+            return Ok(());
+        }
+        let backup_name = format!(
+            "{}.{suffix}.bak",
+            self.path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("quota-store.json")
+        );
+        let backup_path = self.path.with_file_name(backup_name);
+        fs::rename(&self.path, backup_path)
     }
 }
 

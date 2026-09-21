@@ -21,6 +21,17 @@ pub struct QuotaService {
 }
 
 impl QuotaService {
+    pub fn provider_key(&self) -> String {
+        format!(
+            "{}::{}",
+            self.app_name.to_lowercase(),
+            self.reset_window
+                .as_deref()
+                .unwrap_or_default()
+                .to_lowercase()
+        )
+    }
+
     pub fn percentage(&self) -> f64 {
         if self.max <= 0 {
             return 0.0;

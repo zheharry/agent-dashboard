@@ -44,6 +44,14 @@ let state: DashboardState = {
   refreshStatusText: '尚未同步',
 };
 
+const escapeHtml = (value: string) =>
+  value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+
 const app = document.querySelector<HTMLDivElement>('#app');
 if (!app) {
   throw new Error('App root missing');
@@ -104,7 +112,7 @@ const ringMarkup = (service: QuotaService, radius: number) => {
   const progress = circumference * (1 - percentage(service));
   return `
     <circle class="gauge-track" cx="72" cy="72" r="${radius}"></circle>
-    <circle class="gauge-progress" cx="72" cy="72" r="${radius}" stroke="${service.accentHex}" stroke-dasharray="${circumference}" stroke-dashoffset="${progress}"></circle>
+    <circle class="gauge-progress" cx="72" cy="72" r="${radius}" stroke="${escapeHtml(service.accentHex)}" stroke-dasharray="${circumference}" stroke-dashoffset="${progress}"></circle>
   `;
 };
 
@@ -115,19 +123,19 @@ const modalMarkup = (service: Nullable<QuotaService>) => {
     <div class="modal-backdrop" data-close-modal>
       <div class="modal" role="dialog" aria-modal="true" aria-label="Edit service">
         <form id="service-form" class="service-form">
-          <input type="hidden" name="id" value="${service.id}" />
-          <label><span>App</span><input name="appName" value="${service.appName}" required /></label>
-          <label><span>Name</span><input name="name" value="${service.name}" required /></label>
-          <label><span>Quota label</span><input name="quotaLabel" value="${service.quotaLabel}" required /></label>
-          <label><span>Plan</span><input name="plan" value="${service.plan}" required /></label>
-          <label><span>Symbol</span><input name="symbol" value="${service.symbol}" required maxlength="2" /></label>
+          <input type="hidden" name="id" value="${escapeHtml(service.id)}" />
+          <label><span>App</span><input name="appName" value="${escapeHtml(service.appName)}" required /></label>
+          <label><span>Name</span><input name="name" value="${escapeHtml(service.name)}" required /></label>
+          <label><span>Quota label</span><input name="quotaLabel" value="${escapeHtml(service.quotaLabel)}" required /></label>
+          <label><span>Plan</span><input name="plan" value="${escapeHtml(service.plan)}" required /></label>
+          <label><span>Symbol</span><input name="symbol" value="${escapeHtml(service.symbol)}" required maxlength="2" /></label>
           <label><span>Current</span><input name="current" type="number" value="${service.current}" required /></label>
           <label><span>Max</span><input name="max" type="number" value="${service.max}" required /></label>
           <label><span>Reset at</span><input name="resetAt" type="datetime-local" value="${resetAt}" required /></label>
-          <label><span>Accent</span><input name="accentHex" value="${service.accentHex}" required /></label>
-          <label><span>Window</span><input name="resetWindow" value="${service.resetWindow ?? ''}" /></label>
-          <label><span>Disabled reason</span><input name="disabledReason" value="${service.disabledReason ?? ''}" /></label>
-          <label><span>Reset note</span><input name="resetNote" value="${service.resetNote ?? ''}" /></label>
+          <label><span>Accent</span><input name="accentHex" value="${escapeHtml(service.accentHex)}" required /></label>
+          <label><span>Window</span><input name="resetWindow" value="${escapeHtml(service.resetWindow ?? '')}" /></label>
+          <label><span>Disabled reason</span><input name="disabledReason" value="${escapeHtml(service.disabledReason ?? '')}" /></label>
+          <label><span>Reset note</span><input name="resetNote" value="${escapeHtml(service.resetNote ?? '')}" /></label>
           <div class="modal-actions">
             <button type="button" data-close-modal>Cancel</button>
             <button type="submit">Save</button>
@@ -147,7 +155,7 @@ const render = () => {
       <header class="toolbar">
         <div>
           <h1>AgentQuota</h1>
-          <p>${state.refreshStatusText}</p>
+          <p>${escapeHtml(state.refreshStatusText)}</p>
         </div>
         <div class="toolbar-actions">
           <button data-action="refresh" ${state.isRefreshing ? 'disabled' : ''}>Refresh</button>
@@ -155,7 +163,7 @@ const render = () => {
           <button data-action="reset">Reset</button>
         </div>
       </header>
-      ${state.refreshIssues.length ? `<section class="issues">${state.refreshIssues.map((issue) => `<p>${issue}</p>`).join('')}</section>` : ''}
+      ${state.refreshIssues.length ? `<section class="issues">${state.refreshIssues.map((issue) => `<p>${escapeHtml(issue)}</p>`).join('')}</section>` : ''}
       <section class="cards">
         ${groups
           .map((group) => {
@@ -165,10 +173,10 @@ const render = () => {
               <article class="card">
                 <div class="card-header">
                   <div>
-                    <p class="eyebrow">${lead.plan}</p>
-                    <h2>${group.appName}</h2>
+                    <p class="eyebrow">${escapeHtml(lead.plan)}</p>
+                    <h2>${escapeHtml(group.appName)}</h2>
                   </div>
-                  <div class="symbol" style="background:${lead.accentHex}">${lead.symbol}</div>
+                  <div class="symbol" style="background:${escapeHtml(lead.accentHex)}">${escapeHtml(lead.symbol)}</div>
                 </div>
                 <div class="card-body">
                   <svg class="gauge" viewBox="0 0 144 144" aria-hidden="true">
@@ -180,15 +188,15 @@ const render = () => {
                         (service) => `
                           <div class="service-row">
                             <div>
-                              <strong>${service.quotaLabel}</strong>
+                              <strong>${escapeHtml(service.quotaLabel)}</strong>
                               <p>${percentLabel(service)} · reset in ${formatRelativeReset(service.resetAt)}</p>
-                              ${service.disabledReason ? `<p class="meta warning">${service.disabledReason}</p>` : ''}
-                              ${service.resetNote ? `<p class="meta">${service.resetNote}</p>` : ''}
+                              ${service.disabledReason ? `<p class="meta warning">${escapeHtml(service.disabledReason)}</p>` : ''}
+                              ${service.resetNote ? `<p class="meta">${escapeHtml(service.resetNote)}</p>` : ''}
                             </div>
                             <div class="service-actions">
                               <span class="usage">${service.current}/${service.max > 0 ? service.max : 'N/A'}</span>
-                              <button data-edit="${service.id}">Edit</button>
-                              <button data-delete="${service.id}">Delete</button>
+                              <button data-edit="${escapeHtml(service.id)}">Edit</button>
+                              <button data-delete="${escapeHtml(service.id)}">Delete</button>
                             </div>
                           </div>
                         `,
