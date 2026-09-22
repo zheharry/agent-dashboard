@@ -176,7 +176,7 @@ pub async fn fetch_grok() -> Result<LiveQuota, LiveUsageError> {
 
 pub fn parse_claude_response(output: &str, now: DateTime<Utc>) -> Result<Vec<LiveQuota>, LiveUsageError> {
     let response: ClaudeResponse = decode_json_slice(output, "Claude")?;
-    let usages = parse_claude_usage_text(&response.result, now);
+    let usages = parse_claude_usage_text(response.text(), now);
     if usages.is_empty() {
         return Err(LiveUsageError::InvalidResponse("Claude".into()));
     }
@@ -231,6 +231,9 @@ pub fn parse_agy_response(output: &str) -> Result<Vec<LiveQuota>, LiveUsageError
                 .as_deref()
                 .and_then(parse_iso_datetime)
                 .unwrap_or(family_reset);
+            let Some(current) = bucket.current_percent() else {
+                continue;
+            };
             let window_label = if bucket.window == "5h" { "5h" } else { "weekly" };
             results.push(LiveQuota {
                 app_name: if family == "Claude" {
@@ -241,7 +244,7 @@ pub fn parse_agy_response(output: &str) -> Result<Vec<LiveQuota>, LiveUsageError
                     format!("Agy {family}")
                 },
                 service_name: format!("Agy {family} {window_label}"),
-                current: ((1.0 - bucket.remaining_fraction) * 100.0).round() as i64,
+                current,
                 max: 100,
                 reset_at,
                 plan: Some("Pro".into()),
@@ -432,22 +435,34 @@ fn grok_plan(raw_tier: Option<&str>) -> String {
 }
 
 fn parse_claude_usage_text(text: &str, now: DateTime<Utc>) -> Vec<ClaudeUsage> {
+    let percent_regex = Regex::new(r"(\d+(?:\.\d+)?)%").ok();
+
     text.lines()
         .filter_map(|line| {
-            let window = if line.to_lowercase().contains("current session") || line.to_lowercase().contains("5 hour") {
+            let lower = line.to_lowercase();
+            let window = if lower.contains("current session")
+                || lower.contains("5 hour")
+                || lower.contains("5-hour")
+                || lower.contains("5hr")
+                || lower.contains("5h")
+            {
                 "5h"
-            } else if line.to_lowercase().contains("current week") {
+            } else if lower.contains("current week") || lower.contains("weekly") || lower.contains("week") {
                 "weekly"
             } else {
                 return None;
             };
-            let parts: Vec<_> = line.splitn(2, '·').map(str::trim).collect();
-            let percent_text = parts.first()?.split(':').last()?.trim().trim_end_matches('%');
-            let used_percent = percent_text.parse::<i64>().ok()?;
-            let reset_at = parts
-                .get(1)
-                .map(|value| value.replace("resets ", ""))
-                .and_then(|value| parse_claude_date(value.trim(), now));
+            let used_percent = percent_regex
+                .as_ref()
+                .and_then(|regex| regex.captures(line))
+                .and_then(|captures| captures.get(1))
+                .and_then(|value| value.as_str().parse::<f64>().ok())
+                .map(|value| value.round() as i64)?;
+            let reset_at = line
+                .split_once("resets ")
+                .or_else(|| line.split_once("reset "))
+                .map(|(_, value)| value.trim())
+                .and_then(|value| parse_claude_date(value, now));
             Some(ClaudeUsage {
                 window: window.into(),
                 used_percent,
@@ -642,7 +657,7 @@ async fn executable_path(name: &str) -> Option<PathBuf> {
     let home = home_dir();
     let app_data = std::env::var_os("APPDATA").map(PathBuf::from);
     let extensions: &[&str] = if cfg!(windows) {
-        &["", ".cmd", ".exe", ".bat"]
+        &[".cmd", ".exe", ".bat", ""]
     } else {
         &[""]
     };
@@ -665,11 +680,14 @@ async fn executable_path(name: &str) -> Option<PathBuf> {
         return None;
     }
 
-    String::from_utf8_lossy(&located.stdout)
+    let matches = String::from_utf8_lossy(&located.stdout)
         .lines()
         .map(str::trim)
-        .find(|line| !line.is_empty())
+        .filter(|line| !line.is_empty())
         .map(PathBuf::from)
+        .collect::<Vec<_>>();
+
+    pick_preferred_executable(matches)
 }
 
 fn home_dir() -> PathBuf {
@@ -687,7 +705,19 @@ struct ClaudeUsage {
 
 #[derive(Debug, Deserialize)]
 struct ClaudeResponse {
-    result: String,
+    result: Option<String>,
+    content: Option<String>,
+    message: Option<String>,
+}
+
+impl ClaudeResponse {
+    fn text(&self) -> &str {
+        self.result
+            .as_deref()
+            .or(self.content.as_deref())
+            .or(self.message.as_deref())
+            .unwrap_or_default()
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -715,9 +745,31 @@ struct AgyGroup {
 #[serde(rename_all = "camelCase")]
 struct AgyBucket {
     window: String,
-    remaining_fraction: f64,
+    #[serde(alias = "remainingPercent", alias = "remainingPercentage")]
+    remaining_fraction: Option<f64>,
+    #[serde(alias = "usageFraction", alias = "usedPercentage")]
+    used_fraction: Option<f64>,
+    #[serde(alias = "usagePercent")]
+    used_percent: Option<f64>,
     reset_time: Option<String>,
     disabled: Option<bool>,
+}
+
+impl AgyBucket {
+    fn current_percent(&self) -> Option<i64> {
+        if let Some(remaining_fraction) = self.remaining_fraction {
+            return Some(((1.0 - remaining_fraction) * 100.0).round() as i64);
+        }
+        if let Some(used_fraction) = self.used_fraction {
+            let value = if used_fraction <= 1.0 {
+                used_fraction * 100.0
+            } else {
+                used_fraction
+            };
+            return Some(value.round() as i64);
+        }
+        self.used_percent.map(|used_percent| used_percent.round() as i64)
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -802,4 +854,42 @@ struct GrokBillingPeriod {
 #[derive(Debug, Deserialize)]
 struct GrokAmount {
     val: f64,
+}
+
+fn pick_preferred_executable(paths: Vec<PathBuf>) -> Option<PathBuf> {
+    fn rank(path: &PathBuf) -> usize {
+        match path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .map(|extension| extension.to_ascii_lowercase())
+            .as_deref()
+        {
+            Some("cmd") => 0,
+            Some("exe") => 1,
+            Some("bat") => 2,
+            _ => 3,
+        }
+    }
+
+    paths
+        .into_iter()
+        .min_by_key(rank)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::pick_preferred_executable;
+    use std::path::PathBuf;
+
+    #[test]
+    fn prefers_windows_command_wrappers_and_binaries() {
+        let selected = pick_preferred_executable(vec![
+            PathBuf::from(r"C:\Users\demo\AppData\Roaming\npm\codex"),
+            PathBuf::from(r"C:\Users\demo\AppData\Roaming\npm\codex.cmd"),
+            PathBuf::from(r"C:\Users\demo\AppData\Roaming\npm\codex.exe"),
+        ])
+        .unwrap();
+
+        assert_eq!(selected, PathBuf::from(r"C:\Users\demo\AppData\Roaming\npm\codex.cmd"));
+    }
 }

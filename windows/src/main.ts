@@ -77,6 +77,9 @@ const percentage = (service: QuotaService) => (service.max <= 0 ? 0 : Math.max(0
 
 const percentLabel = (service: QuotaService) => (service.max <= 0 ? 'N/A' : `${Math.round(percentage(service) * 100)}%`);
 
+const compactQuotaLabel = (service: QuotaService) =>
+  service.quotaLabel.includes('·') ? service.quotaLabel.split('·').pop()?.trim() ?? service.quotaLabel : service.quotaLabel;
+
 const formatRelativeReset = (isoValue: string) => {
   const resetAt = new Date(isoValue);
   const diffMs = resetAt.getTime() - Date.now();
@@ -150,10 +153,11 @@ let editingService: Nullable<QuotaService> = null;
 
 const render = () => {
   const groups = groupServices(state.services);
+  const liveCount = state.liveServiceNames.length;
   app.innerHTML = `
     <main class="shell">
       <header class="toolbar">
-        <div>
+        <div class="toolbar-copy">
           <h1>AgentQuota</h1>
           <p>${escapeHtml(state.refreshStatusText)}</p>
         </div>
@@ -163,38 +167,51 @@ const render = () => {
           <button data-action="reset">Reset</button>
         </div>
       </header>
-      ${state.refreshIssues.length ? `<section class="issues">${state.refreshIssues.map((issue) => `<p>${escapeHtml(issue)}</p>`).join('')}</section>` : ''}
+      <section class="status-strip">
+        <span class="status-pill ${liveCount > 0 ? 'ok' : ''}">${liveCount > 0 ? `${liveCount} synced` : 'No live data yet'}</span>
+        ${state.refreshIssues.length ? `<span class="status-pill warning">${state.refreshIssues.length} issue${state.refreshIssues.length === 1 ? '' : 's'}</span>` : ''}
+      </section>
+      ${state.refreshIssues.length ? `<details class="issues"><summary>Sync issues</summary><div class="issues-list">${state.refreshIssues.map((issue) => `<p>${escapeHtml(issue)}</p>`).join('')}</div></details>` : ''}
       <section class="cards">
         ${groups
           .map((group) => {
-            const radii = [54, 42, 30, 18];
+            const radii = [40, 31, 22, 13];
             const lead = group.services[0];
             return `
               <article class="card">
                 <div class="card-header">
-                  <div>
-                    <p class="eyebrow">${escapeHtml(lead.plan)}</p>
-                    <h2>${escapeHtml(group.appName)}</h2>
+                  <div class="card-heading">
+                    <div class="symbol" style="background:${escapeHtml(lead.accentHex)}">${escapeHtml(lead.symbol)}</div>
+                    <div>
+                      <p class="eyebrow">${escapeHtml(lead.plan)}</p>
+                      <h2>${escapeHtml(group.appName)}</h2>
+                    </div>
                   </div>
-                  <div class="symbol" style="background:${escapeHtml(lead.accentHex)}">${escapeHtml(lead.symbol)}</div>
+                  <div class="card-usage ${group.highestUsage >= 0.9 ? 'danger' : group.highestUsage >= 0.7 ? 'warn' : ''}">
+                    ${Math.round(group.highestUsage * 100)}%
+                  </div>
                 </div>
                 <div class="card-body">
-                  <svg class="gauge" viewBox="0 0 144 144" aria-hidden="true">
-                    ${group.services.map((service, index) => ringMarkup(service, radii[index] ?? 12)).join('')}
+                  <svg class="gauge" viewBox="0 0 108 108" aria-hidden="true">
+                    <g transform="translate(-18 -18)">
+                      ${group.services.map((service, index) => ringMarkup(service, radii[index] ?? 10)).join('')}
+                    </g>
                   </svg>
                   <div class="service-list">
                     ${group.services
                       .map(
                         (service) => `
                           <div class="service-row">
-                            <div>
-                              <strong>${escapeHtml(service.quotaLabel)}</strong>
+                            <div class="service-copy">
+                              <div class="service-copy-top">
+                                <strong>${escapeHtml(compactQuotaLabel(service))}</strong>
+                                <span class="usage">${service.current}/${service.max > 0 ? service.max : 'N/A'}</span>
+                              </div>
                               <p>${percentLabel(service)} · reset in ${formatRelativeReset(service.resetAt)}</p>
                               ${service.disabledReason ? `<p class="meta warning">${escapeHtml(service.disabledReason)}</p>` : ''}
                               ${service.resetNote ? `<p class="meta">${escapeHtml(service.resetNote)}</p>` : ''}
                             </div>
                             <div class="service-actions">
-                              <span class="usage">${service.current}/${service.max > 0 ? service.max : 'N/A'}</span>
                               <button data-edit="${escapeHtml(service.id)}">Edit</button>
                               <button data-delete="${escapeHtml(service.id)}">Delete</button>
                             </div>
