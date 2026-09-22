@@ -1,0 +1,8 @@
+{
+  "usageItems": [
+    { "date": "2026-09-03", "product": "copilot", "quantity": 55, "sku": "AI Credit" },
+    { "date": "2026-09-12", "product": "copilot", "quantity": 44.4, "sku": "AI Credit" },
+    { "date": "2026-09-15", "product": "copilot", "quantity": 10, "sku": "Other" },
+    { "date": "2026-08-30", "product": "copilot", "quantity": 999, "sku": "AI Credit" }
+  ]
+}

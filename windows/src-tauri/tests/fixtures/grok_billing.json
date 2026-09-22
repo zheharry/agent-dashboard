@@ -1,0 +1,17 @@
+{
+  "config": {
+    "currentPeriod": {
+      "type": "week",
+      "end": "2026-09-28T00:00:00Z"
+    },
+    "creditUsagePercent": 35,
+    "onDemandCap": { "val": 25 }
+  },
+  "history": [
+    {
+      "end": "2026-09-21T00:00:00Z",
+      "creditUsagePercent": 20,
+      "subscriptionTier": "supergrok plus"
+    }
+  ]
+}

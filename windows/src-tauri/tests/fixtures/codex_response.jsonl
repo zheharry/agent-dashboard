@@ -1,0 +1,2 @@
+{"id":1,"result":{"ok":true}}
+{"id":2,"result":{"rateLimits":{"planType":"Plus","primary":{"usedPercent":61,"windowDurationMins":300,"resetsAt":1790035200},"secondary":{"usedPercent":27,"windowDurationMins":10080,"resetsAt":1790553600}}}}

@@ -1,0 +1,98 @@
+name: Build Windows artifacts
+
+on:
+  pull_request:
+    paths:
+      - 'windows/**'
+      - '.github/workflows/windows-artifacts.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'windows/**'
+      - '.github/workflows/windows-artifacts.yml'
+  release:
+    types:
+      - published
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    defaults:
+      run:
+        shell: pwsh
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: windows/package-lock.json
+
+      - name: Install Rust stable
+        run: |
+          rustup update stable
+          rustup default stable
+
+      - name: Install frontend dependencies
+        working-directory: windows
+        run: npm ci
+
+      - name: Build Tauri Windows bundle
+        working-directory: windows
+        run: npm run tauri build -- --bundles msi,nsis
+
+      - name: Collect bundle artifacts
+        id: collect
+        run: |
+          $artifactDir = Join-Path $env:RUNNER_TEMP 'agentquota-windows-artifacts'
+          New-Item -ItemType Directory -Force -Path $artifactDir | Out-Null
+
+          $bundleRoot = Join-Path $env:GITHUB_WORKSPACE 'windows/src-tauri/target/release/bundle'
+          if (-not (Test-Path $bundleRoot)) {
+            throw "Bundle output not found: $bundleRoot"
+          }
+
+          $files = Get-ChildItem -Path $bundleRoot -Recurse -File | Where-Object {
+            $_.Extension -in @('.msi', '.exe')
+          }
+
+          if ($files.Count -eq 0) {
+            throw 'No Windows bundle artifacts were produced.'
+          }
+
+          foreach ($file in $files) {
+            Copy-Item $file.FullName -Destination (Join-Path $artifactDir $file.Name) -Force
+          }
+
+          "artifact_dir=$artifactDir" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: agentquota-windows-${{ github.sha }}
+          path: ${{ steps.collect.outputs.artifact_dir }}
+          if-no-files-found: error
+
+      - name: Attach files to GitHub release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          ARTIFACT_DIR: ${{ steps.collect.outputs.artifact_dir }}
+        run: |
+          $files = Get-ChildItem -Path $env:ARTIFACT_DIR -File | ForEach-Object { $_.FullName }
+          if ($files.Count -eq 0) {
+            throw 'No files available to upload to the release.'
+          }
+
+          & gh release upload $env:RELEASE_TAG @files --clobber

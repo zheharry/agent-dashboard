@@ -1,0 +1,345 @@
+:root {
+  color-scheme: dark;
+  font-family: Inter, "Segoe UI", sans-serif;
+  background: #111827;
+  color: #f9fafb;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: radial-gradient(circle at top, #1f2937, #0f172a 60%);
+  overflow: hidden;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+button {
+  border: 0;
+  border-radius: 999px;
+  padding: 0.45rem 0.8rem;
+  background: #334155;
+  color: inherit;
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+input {
+  width: 100%;
+  border: 1px solid #334155;
+  border-radius: 0.75rem;
+  padding: 0.55rem 0.7rem;
+  background: #0f172a;
+  color: inherit;
+}
+
+.shell {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  padding: 1rem;
+  min-height: 100vh;
+  overflow-y: auto;
+}
+
+.toolbar {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+.toolbar h1,
+.card h2 {
+  margin: 0;
+}
+
+.toolbar-copy {
+  min-width: 0;
+}
+
+.toolbar h1 {
+  font-size: 2rem;
+  line-height: 1;
+}
+
+.toolbar p,
+.meta,
+.eyebrow {
+  margin: 0.2rem 0 0;
+  color: #cbd5e1;
+}
+
+.toolbar-actions,
+.service-actions,
+.modal-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.status-strip {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.status-pill {
+  border-radius: 999px;
+  padding: 0.3rem 0.65rem;
+  background: rgba(51, 65, 85, 0.9);
+  color: #dbeafe;
+  font-size: 0.82rem;
+}
+
+.status-pill.ok {
+  background: rgba(8, 145, 178, 0.18);
+  color: #a5f3fc;
+}
+
+.status-pill.warning {
+  background: rgba(127, 29, 29, 0.38);
+  color: #fecaca;
+}
+
+.issues {
+  border: 1px solid rgba(248, 113, 113, 0.35);
+  background: rgba(127, 29, 29, 0.4);
+  border-radius: 1rem;
+  padding: 0.8rem 1rem;
+}
+
+.issues summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.issues-list {
+  margin-top: 0.7rem;
+  display: grid;
+  gap: 0.4rem;
+  max-height: 10rem;
+  overflow-y: auto;
+}
+
+.issues p {
+  margin: 0;
+  line-height: 1.45;
+}
+
+.cards {
+  display: grid;
+  gap: 0.9rem;
+}
+
+.card {
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  background: rgba(15, 23, 42, 0.88);
+  border-radius: 1.2rem;
+  padding: 0.95rem;
+  box-shadow: 0 18px 40px rgba(15, 23, 42, 0.35);
+}
+
+.card-header,
+.service-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.8rem;
+}
+
+.card-header {
+  align-items: center;
+}
+
+.card-heading {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+.card-usage {
+  border-radius: 999px;
+  padding: 0.25rem 0.55rem;
+  background: rgba(51, 65, 85, 0.7);
+  color: #cbd5e1;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.card-usage.warn {
+  color: #fdba74;
+}
+
+.card-usage.danger {
+  color: #fca5a5;
+}
+
+.card-body {
+  display: grid;
+  grid-template-columns: 108px minmax(0, 1fr);
+  gap: 0.9rem;
+  align-items: flex-start;
+  margin-top: 0.8rem;
+}
+
+.symbol {
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  font-weight: 700;
+  flex: 0 0 auto;
+}
+
+.gauge {
+  width: 108px;
+  height: 108px;
+  transform: rotate(-90deg);
+}
+
+.gauge-track,
+.gauge-progress {
+  fill: none;
+  stroke-width: 9;
+  stroke-linecap: round;
+}
+
+.gauge-track {
+  stroke: rgba(148, 163, 184, 0.18);
+}
+
+.service-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+}
+
+.service-row {
+  align-items: center;
+  padding: 0.55rem 0;
+  border-top: 1px solid rgba(148, 163, 184, 0.1);
+}
+
+.service-row:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.service-copy {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.service-copy-top {
+  display: flex;
+  gap: 0.75rem;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.service-copy strong,
+.usage {
+  display: block;
+}
+
+.service-copy p {
+  margin: 0.22rem 0 0;
+  color: #e2e8f0;
+  line-height: 1.35;
+}
+
+.usage {
+  color: #cbd5e1;
+  font-size: 0.9rem;
+  white-space: nowrap;
+}
+
+.service-actions {
+  justify-content: flex-end;
+}
+
+.service-actions button {
+  min-width: 4.35rem;
+}
+
+.warning {
+  color: #fca5a5;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.78);
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+}
+
+.modal {
+  width: min(34rem, 100%);
+  background: #0f172a;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  border-radius: 1rem;
+  padding: 1rem;
+}
+
+.service-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.service-form label {
+  display: grid;
+  gap: 0.3rem;
+}
+
+.service-form label span {
+  font-size: 0.85rem;
+  color: #cbd5e1;
+}
+
+.service-form .modal-actions {
+  grid-column: 1 / -1;
+  justify-content: flex-end;
+  margin-top: 0.5rem;
+}
+
+@media (max-width: 520px) {
+  .card-body {
+    grid-template-columns: 1fr;
+  }
+
+  .gauge {
+    margin: 0 auto;
+  }
+
+  .service-row {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .service-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .service-form {
+    grid-template-columns: 1fr;
+  }
+}
